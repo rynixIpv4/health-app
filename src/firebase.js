@@ -14,7 +14,7 @@ import {
   getMultiFactorResolver
 } from "firebase/auth";
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
-import { getFirestore, doc, getDoc } from "firebase/firestore";
+import { getFirestore, doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from 'expo-file-system';
 
@@ -70,33 +70,34 @@ export const sendPhoneVerificationCode = async (phoneNumber, recaptchaVerifier) 
     // Attempt to send the verification code
     const phoneProvider = new PhoneAuthProvider(auth);
     
-    // reCAPTCHA handling - continue even if there's a warning about Enterprise config
     try {
       console.log('Attempting to send verification code with reCAPTCHA...');
+      
+      // Check if reCAPTCHA verifier is valid
+      if (!recaptchaVerifier || !recaptchaVerifier.current) {
+        console.warn('reCAPTCHA verifier is not properly initialized');
+        return {
+          success: false,
+          error: 'reCAPTCHA verification is required but not properly initialized.'
+        };
+      }
+      
       const verificationId = await phoneProvider.verifyPhoneNumber(
         formattedPhoneNumber,
-        recaptchaVerifier
+        recaptchaVerifier.current
       );
       
       console.log('Verification code sent successfully to:', formattedPhoneNumber);
       return { success: true, verificationId };
     } catch (recaptchaError) {
-      // Check if it's a known initialization error that doesn't actually break functionality
-      if (recaptchaError.message && recaptchaError.message.includes('reCAPTCHA Enterprise')) {
-        console.log('Non-critical reCAPTCHA error - continuing with verification:', recaptchaError.message);
-        
-        // Try again - often works on second attempt despite the warning
-        const verificationId = await phoneProvider.verifyPhoneNumber(
-          formattedPhoneNumber,
-          recaptchaVerifier
-        );
-        
-        console.log('Verification code sent successfully on retry to:', formattedPhoneNumber);
-        return { success: true, verificationId };
-      }
+      console.error('reCAPTCHA error:', recaptchaError);
       
-      // If it's not the known Enterprise config error, rethrow to be handled below
-      throw recaptchaError;
+      // Return the specific reCAPTCHA error
+      return { 
+        success: false, 
+        error: recaptchaError.message || 'reCAPTCHA verification failed. Please try again.',
+        code: recaptchaError.code
+      };
     }
   } catch (error) {
     console.error('Error sending verification code:', error);
@@ -123,6 +124,7 @@ export const sendPhoneVerificationCode = async (phoneNumber, recaptchaVerifier) 
 
 export const verifyPhoneCode = async (verificationId, verificationCode) => {
   try {
+    // Standard phone verification
     // Create a PhoneAuthCredential with the provided verification ID and code
     const credential = PhoneAuthProvider.credential(verificationId, verificationCode);
     
@@ -366,10 +368,27 @@ export const verify2FA = async (phoneNumber, resolver, recaptchaVerifier) => {
     
     // Send verification code to the user's phone
     const phoneProvider = new PhoneAuthProvider(auth);
-    const verificationId = await phoneProvider.verifyPhoneNumber(
-      phoneInfoOptions,
-      recaptchaVerifier
-    );
+    
+    // Try with error handling for recaptcha
+    let verificationId;
+    try {
+      verificationId = await phoneProvider.verifyPhoneNumber(
+        phoneInfoOptions,
+        recaptchaVerifier.current
+      );
+    } catch (recaptchaError) {
+      console.log('Recaptcha error, trying alternative approach:', recaptchaError);
+      
+      // Try again with a direct phone number if the hint fails
+      if (phoneNumber) {
+        verificationId = await phoneProvider.verifyPhoneNumber(
+          phoneNumber,
+          recaptchaVerifier.current
+        );
+      } else {
+        throw recaptchaError;
+      }
+    }
     
     console.log('2FA verification code sent successfully');
     return { 
@@ -418,21 +437,50 @@ export const complete2FASignIn = async (resolver, verificationId, verificationCo
 export const getMultiFactorResolverFromError = (error) => {
   try {
     if (error.code === 'auth/multi-factor-auth-required') {
-      console.log('Multi-factor authentication required');
+      console.log('Multi-factor authentication required, getting resolver');
+      
+      // Get the resolver from the error
       const resolver = getMultiFactorResolver(auth, error);
+      
+      if (!resolver) {
+        console.error('Failed to get multi-factor resolver from error');
+        return { 
+          success: false, 
+          error: 'Failed to initialize two-factor authentication' 
+        };
+      }
+      
+      // Log resolver details for debugging
+      console.log('MFA resolver obtained with hints:', resolver.hints?.length || 0);
+      
+      // Ensure we have hints
+      if (!resolver.hints || resolver.hints.length === 0) {
+        console.error('No multi-factor hints available');
+        return { 
+          success: false, 
+          error: 'No second factor methods are available for this account' 
+        };
+      }
+      
       return { 
         success: true, 
         resolver,
         hints: resolver.hints
       };
     }
-    return { success: false, error: 'Not a multi-factor auth error' };
-  } catch (error) {
-    console.error('Error getting multi-factor resolver:', error);
+    
+    console.error('Not a multi-factor auth error:', error.code);
     return { 
       success: false, 
-      error: error.message || 'Failed to process multi-factor authentication',
-      code: error.code
+      error: 'Not a multi-factor authentication error', 
+      code: error.code 
+    };
+  } catch (resolverError) {
+    console.error('Error getting multi-factor resolver:', resolverError);
+    return { 
+      success: false, 
+      error: resolverError.message || 'Failed to process multi-factor authentication',
+      code: resolverError.code || error.code
     };
   }
 };
@@ -492,6 +540,17 @@ export const enroll2FAFactor = async (user, verificationId, verificationCode) =>
     console.log('Creating phone auth credential...');
     const phoneAuthCredential = PhoneAuthProvider.credential(verificationId, verificationCode);
     
+    // First, try to re-authenticate the user if necessary
+    try {
+      const currentUser = auth.currentUser;
+      if (currentUser) {
+        await linkWithCredential(currentUser, phoneAuthCredential);
+      }
+    } catch (linkError) {
+      console.log('Linking not needed or already done, continuing with enrollment', linkError);
+      // Continue with enrollment, as this might not be necessary
+    }
+    
     // Create the assertion
     console.log('Creating multi-factor assertion...');
     const multiFactorAssertion = PhoneMultiFactorGenerator.assertion(phoneAuthCredential);
@@ -500,51 +559,26 @@ export const enroll2FAFactor = async (user, verificationId, verificationCode) =>
     console.log('Enrolling phone as second factor...');
     await multiFactorUser.enroll(multiFactorAssertion, "Phone 2FA");
     
+    // Update user data in Firestore
+    try {
+      const userRef = doc(db, 'users', user.uid);
+      await updateDoc(userRef, {
+        twoFactorEnabled: true,
+        updatedAt: serverTimestamp(),
+      });
+      console.log('Updated user document with 2FA status');
+    } catch (firestoreError) {
+      console.error('Error updating Firestore:', firestoreError);
+      // Continue since the 2FA is still enabled even if we couldn't update Firestore
+    }
+    
     console.log('Phone enrolled as 2FA method successfully');
     return { success: true };
     
   } catch (error) {
     console.error('Error enrolling 2FA factor:', error);
     
-    // For provider-already-linked, we should still treat it as success
-    if (error.code === 'auth/provider-already-linked') {
-      console.log('Phone provider already linked - treating as success for 2FA enrollment');
-      
-      // Double-check if the user has MFA enrolled
-      try {
-        const multiFactorUser = multiFactor(user);
-        const enrolledFactors = multiFactorUser.enrolledFactors || [];
-        
-        if (enrolledFactors.length > 0) {
-          return { 
-            success: true, 
-            message: 'Phone is already linked and 2FA is already enabled',
-            alreadyEnrolled: true
-          };
-        } else {
-          // Try to unenroll any existing factors (cleanup) and try again with a new session
-          console.log('Provider linked but no MFA factors found. This is unusual.');
-          return { 
-            success: false, 
-            error: 'Phone is linked but 2FA is not fully set up. Please try again with a new verification code.',
-            code: 'auth/incomplete-mfa-setup',
-            requiresNewVerification: true
-          };
-        }
-      } catch (mfaError) {
-        console.error('Error checking MFA status:', mfaError);
-      }
-      
-      return { 
-        success: false, 
-        error: 'Phone is already linked but 2FA setup incomplete. Try again.',
-        code: error.code,
-        requiresNewVerification: true
-      };
-    }
-    
-    // Provide more specific error message based on error code
-    let errorMessage = 'Failed to enroll 2FA factor';
+    let errorMessage = error.message || 'Failed to enroll phone as 2FA method';
     
     if (error.code === 'auth/invalid-verification-code') {
       errorMessage = 'Invalid verification code. Please try again.';
@@ -554,6 +588,14 @@ export const enroll2FAFactor = async (user, verificationId, verificationCode) =>
       errorMessage = 'Invalid verification session. Please request a new code.';
     } else if (error.code === 'auth/requires-recent-login') {
       errorMessage = 'This operation requires recent authentication. Please log in again.';
+    } else if (error.code === 'auth/credential-already-in-use') {
+      errorMessage = 'This phone number is already linked to another account.';
+    } else if (error.code === 'auth/phone-number-already-exists') {
+      errorMessage = 'This phone number is already used by another account.';
+    } else if (error.code === 'auth/provider-already-linked') {
+      errorMessage = 'This authentication method is already linked to your account.';
+    } else if (error.code === 'auth/captcha-check-failed') {
+      errorMessage = 'reCAPTCHA verification failed. Please try again.';
     }
     
     return { 

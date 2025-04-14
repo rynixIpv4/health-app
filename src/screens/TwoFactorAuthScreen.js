@@ -228,7 +228,7 @@ const TwoFactorAuthScreen = () => {
           </View>
 
           {error ? (
-            <Text style={styles.errorText}>{error}</Text>
+            <Text style={[styles.errorText, { color: themeColors.error }]}>{error}</Text>
           ) : (
             <Text style={[styles.timerText, { color: themeColors.subText }]}>
               {canResend

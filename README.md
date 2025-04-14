@@ -1,50 +1,74 @@
-# Welcome to your Expo app 👋
+# Health Tracking App
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A comprehensive mobile app for tracking health metrics including steps, heart rate, sleep, and cycling activities. The app also includes a feature to connect to smart health tracking rings via Bluetooth.
 
-## Get started
+## Features
 
-1. Install dependencies
+- **Dashboard**: View all your health metrics at a glance
+- **Detailed Statistics**: Interactive charts for steps, heart rate, sleep patterns, and cycling
+- **Smart Ring Connectivity**: Connect to health tracking rings (simulated)
+- **Modern UI**: Clean and intuitive interface with smooth navigation
 
-   ```bash
-   npm install
-   ```
+## Screenshots
 
-2. Start the app
+- Dashboard with health cards
+- Detailed statistics with bar charts
+- Activity tracking with time range selection
+- Smart ring connection process
 
-   ```bash
-    npx expo start
-   ```
+## Getting Started
 
-In the output, you'll find options to open the app in a
+### Prerequisites
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+- Node.js (v14+)
+- Expo CLI (`npm install -g expo-cli`)
+- iOS Simulator (Mac only) or Xcode
+- Android Studio and Android Emulator
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+### Installation
 
-## Get a fresh project
-
-When you're ready, run:
-
+1. Clone the repository
 ```bash
-npm run reset-project
+git clone https://github.com/yourusername/health-tracking-app.git
+cd health-tracking-app
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+2. Install dependencies
+```bash
+npm install --legacy-peer-deps
+```
 
-## Learn more
+3. Start the development server
+```bash
+npm start
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+### Running on Devices
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+#### iOS
+```bash
+npm run ios
+```
 
-## Join the community
+#### Android
+```bash
+npm run android
+```
 
-Join our community of developers creating universal apps.
+## Mobile Development Notes
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+- The app is designed for iOS and Android platforms
+- UI is optimized for both phone and tablet layouts
+- Bluetooth functionality is currently simulated
+- For real device connectivity, a development build would be required
+
+## Project Structure
+
+- `src/screens/` - Main app screens
+- `src/components/` - Reusable UI components
+- `assets/` - Images and other static assets
+
+## Customization
+
+- Color schemes can be adjusted in the theme configuration (App.js)
+- Statistics data is currently simulated but can be replaced with real API calls

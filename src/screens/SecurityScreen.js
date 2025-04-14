@@ -238,35 +238,32 @@ const SecurityScreen = () => {
             
             console.log('2FA status check - Firebase enrolled factors:', enrolledFactors);
             
+            // Update 2FA state based on actual enrolled factors
             if (enrolledFactors.length > 0) {
-              // User has 2FA enabled in Firebase Auth
-              console.log('User has 2FA enabled in Firebase Auth');
+              setIs2FAEnabled(true);
               
-              // If it's not enabled in Firestore, update it
+              // If the Firestore data doesn't match the actual 2FA state, update it
               if (!userData.twoFactorEnabled) {
-                console.log('Updating Firestore to reflect 2FA status from Firebase Auth');
+                const userRef = doc(db, 'users', user.uid);
                 await updateDoc(userRef, {
                   twoFactorEnabled: true
                 });
+                console.log('Updated Firestore to match actual 2FA state (enabled)');
               }
-              
-              setIs2FAEnabled(true);
             } else {
-              // User doesn't have 2FA in Firebase Auth
-              console.log('User does not have 2FA enabled in Firebase Auth');
-              
-              // If it's enabled in Firestore, update it
+              // No enrolled factors found in Firebase Auth
               if (userData.twoFactorEnabled) {
-                console.log('Updating Firestore to reflect 2FA status from Firebase Auth');
+                // If Firestore says 2FA is enabled but no factors are enrolled, update Firestore
+                const userRef = doc(db, 'users', user.uid);
                 await updateDoc(userRef, {
                   twoFactorEnabled: false
                 });
+                setIs2FAEnabled(false);
+                console.log('Updated Firestore to match actual 2FA state (disabled)');
               }
-              
-              setIs2FAEnabled(false);
             }
-          } catch (error) {
-            console.error('Error checking MFA status:', error);
+          } catch (err) {
+            console.error('Error checking MFA status:', err);
           }
         }
       } catch (error) {

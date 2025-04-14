@@ -45,96 +45,75 @@ const SignInScreen = () => {
   };
 
   const handleSignIn = async () => {
+    if (!email || !password) {
+      setError('Please enter both email and password');
+      return;
+    }
+
+    setIsLoading(true);
+    setError('');
+
     try {
-      setIsLoading(true);
-      setError('');
-
-      // Validate email and password
-      if (!email.trim() || !password.trim()) {
-        setError('Please enter your email and password');
-        setIsLoading(false);
-        return;
-      }
-
-      // Sign in
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
-
-      // Reload user to get latest verification status
-      await user.reload();
-      const isEmailVerified = user.emailVerified;
-
-      // Check for phone verification in Firestore
-      const userRef = doc(db, 'users', user.uid);
-      const userDoc = await getDoc(userRef);
-      const userData = userDoc.exists() ? userDoc.data() : null;
-      const isPhoneVerified = userData?.phoneVerified || false;
-
-      // If user hasn't verified email
-      if (!isEmailVerified) {
-        // Send a new verification email
-        await sendVerificationEmail(user);
-        
-        // Alert user that they need to verify their email
-        Alert.alert(
-          'Email Verification Required',
-          'Please verify your email before signing in. We\'ve sent a verification link to your email address.',
-          [
-            {
-              text: 'Resend Email',
-              onPress: async () => {
-                await sendVerificationEmail(user);
-                Alert.alert('Email Sent', 'Verification email has been resent.');
-                // Sign out the user since they can't access the app yet
-                await auth.signOut();
-              }
-            },
-            {
-              text: 'OK',
-              onPress: async () => {
-                // Sign out the user since they can't access the app yet
-                await auth.signOut();
-              }
-            }
-          ]
-        );
-        setIsLoading(false);
-        return;
-      }
-
-      // If user hasn't verified phone
-      if (!isPhoneVerified) {
-        Alert.alert(
-          'Phone Verification Required',
-          'Please verify your phone number to complete account setup.',
-          [
-            {
-              text: 'Verify Now',
-              onPress: () => {
-                // Navigate to phone verification screen
-                navigation.navigate('PhoneSetup', { 
-                  phoneNumber: userData?.phoneNumber || '', 
-                  fromSettings: false,
-                  isNewAccount: false 
-                });
-              }
-            }
-          ]
-        );
-        setIsLoading(false);
-        return;
-      }
-
-      // Both email and phone are verified, set as authenticated
-      console.log('User is fully verified. Setting as authenticated.');
-      setUserData(userData);
-      setIsAuthenticated(true);
+      // First try regular sign in
+      console.log('Attempting sign in with email:', email);
+      await signInWithEmailAndPassword(auth, email, password)
+        .then(async (userCredential) => {
+          console.log('Sign in successful, checking if user has 2FA enabled');
+          const user = userCredential.user;
+          
+          // Get user data from Firestore
+          const userRef = doc(db, 'users', user.uid);
+          const userDoc = await getDoc(userRef);
+          const userData = userDoc.exists() ? userDoc.data() : null;
+          
+          // Check if email is verified if required
+          if (user.emailVerified || !userData?.requireEmailVerification) {
+            // Set user as authenticated
+            setUserData(userData);
+            setIsAuthenticated(true);
+            
+            // Navigate to main app
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'MainApp' }],
+            });
+          } else {
+            // Email verification required
+            Alert.alert(
+              'Email Verification Required',
+              'Please verify your email before signing in. Would you like us to send another verification email?',
+              [
+                {
+                  text: 'No',
+                  style: 'cancel'
+                },
+                {
+                  text: 'Yes, Send Again',
+                  onPress: async () => {
+                    await sendVerificationEmail(user);
+                    Alert.alert(
+                      'Verification Email Sent',
+                      'Please check your email and follow the verification link.'
+                    );
+                  }
+                }
+              ]
+            );
+            
+            // Sign out user since they need to verify email
+            await auth.signOut();
+          }
+        })
+        .catch((error) => {
+          // If error is multi-factor auth required, it means 2FA is properly set up
+          // This is expected and should be handled separately
+          if (error.code === 'auth/multi-factor-auth-required') {
+            throw error; // Rethrow to be caught by the outer catch block
+          }
+          
+          throw error; // Rethrow other errors
+        });
       
-      // Navigate to main app
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'MainApp' }],
-      });
     } catch (error) {
       console.error('Sign in error:', error);
       
@@ -146,6 +125,7 @@ const SignInScreen = () => {
         const resolverResult = getMultiFactorResolverFromError(error);
         
         if (resolverResult.success) {
+          console.log('MFA resolver obtained successfully, redirecting to 2FA screen');
           // Navigate to 2FA screen
           navigation.navigate('TwoFactorAuth', {
             resolver: resolverResult.resolver,
@@ -153,6 +133,9 @@ const SignInScreen = () => {
           });
           setIsLoading(false);
           return;
+        } else {
+          console.error('Failed to get MFA resolver:', resolverResult.error);
+          setError('Failed to start two-factor authentication');
         }
       }
       
